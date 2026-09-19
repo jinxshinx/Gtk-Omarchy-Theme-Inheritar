@@ -47,6 +47,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -139,12 +140,15 @@ def resolve_palette(colors_file: Path) -> dict[str, str]:
     resolver = RESOLVER if Path(RESOLVER).exists() else shutil.which("omarchy-theme-color")
     if not resolver:
         raise SystemExit("omarchy-theme-color not found; cannot resolve the palette")
-    result = subprocess.run(
-        [resolver, "--file", str(colors_file), "--all"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [resolver, "--file", str(colors_file), "--all"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise SystemExit(f"cannot run {resolver}: {exc.strerror}") from exc
     if result.returncode != 0:
         raise SystemExit(f"omarchy-theme-color failed: {result.stderr.strip()}")
     palette: dict[str, str] = {}
@@ -161,12 +165,15 @@ def resolve_palette(colors_file: Path) -> dict[str, str]:
 def theme_mode(colors_file: Path) -> str:
     resolver = RESOLVER if Path(RESOLVER).exists() else shutil.which("omarchy-theme-color")
     if resolver:
-        result = subprocess.run(
-            [resolver, "--file", str(colors_file), "mode"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                [resolver, "--file", str(colors_file), "mode"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return "dark"
         mode = result.stdout.strip().lower()
         if mode in ("light", "dark"):
             return mode
@@ -232,38 +239,92 @@ def load_base_css(mode: str) -> str:
     return load_resource(LIGHT_BASE if mode == "light" else DARK_BASE, "libgtk-3")
 
 
-def load_resource(resource: str, library: str) -> str:
-    """Read a stylesheet out of a GTK library's GResource bundle."""
+LIBRARY_PATHS = {
+    "libgtk-3": ("/usr/lib/libgtk-3.so.0", "/usr/lib64/libgtk-3.so.0",
+                 "/usr/lib/x86_64-linux-gnu/libgtk-3.so.0"),
+    "libgtk-4": ("/usr/lib/libgtk-4.so.1", "/usr/lib64/libgtk-4.so.1",
+                 "/usr/lib/x86_64-linux-gnu/libgtk-4.so.1"),
+}
+
+
+_GI_EXTRACTOR = (
+    "import sys\n"
+    "import gi\n"
+    "gi.require_version('Gtk', {version!r})\n"
+    "from gi.repository import Gio, Gtk  # noqa: F401 - loads libgtk, registers its GResource\n"
+    "data = Gio.resources_lookup_data({resource!r}, Gio.ResourceLookupFlags.NONE)\n"
+    "open(sys.argv[1], 'wb').write(data.get_data())\n"
+)
+
+
+def _resource_via_gi(resource: str, version: str) -> str | None:
+    """Read a resource with PyGObject, in a fresh interpreter.
+
+    PyGObject pins a process to one GTK version - Gtk 3.0 or Gtk 4.0 may be
+    loaded, never both - so the GTK4 stylesheet can no longer be read from the
+    interpreter that already loaded Gtk 3.0 for the GTK3 stylesheet. A child
+    process per lookup keeps the PyGObject path usable for both, without
+    requiring the `gresource` command line tool. The child writes to a
+    temporary file rather than stdout, so Python startup hooks a user may have
+    (sitecustomize/usercustomize) cannot corrupt the stylesheet.
+    """
+    handle, temp = tempfile.mkstemp(prefix="omarchy-adwaita-gtk-", suffix=".css")
+    os.close(handle)
     try:
-        import gi
-
-        gi.require_version("Gtk", "4.0" if library == "libgtk-4" else "3.0")
-        from gi.repository import Gio, Gtk  # noqa: F401  (Gtk registers the resource)
-
-        data = Gio.resources_lookup_data(resource, Gio.ResourceLookupFlags.NONE)
-        css = data.get_data().decode("utf-8")
-        if css.strip():
-            return css
-    except Exception:
-        pass
-    candidates = {
-        "libgtk-3": ("/usr/lib/libgtk-3.so.0", "/usr/lib64/libgtk-3.so.0",
-                     "/usr/lib/x86_64-linux-gnu/libgtk-3.so.0"),
-        "libgtk-4": ("/usr/lib/libgtk-4.so.1", "/usr/lib64/libgtk-4.so.1",
-                     "/usr/lib/x86_64-linux-gnu/libgtk-4.so.1"),
-    }[library]
-    for lib in candidates:
-        if not Path(lib).exists():
-            continue
         result = subprocess.run(
-            ["gresource", "extract", lib, resource],
+            [sys.executable, "-c",
+             _GI_EXTRACTOR.format(version=version, resource=resource), temp],
             capture_output=True,
-            text=True,
             check=False,
         )
+        if result.returncode != 0:
+            return None
+        data = Path(temp).read_bytes()
+    except OSError:
+        return None
+    finally:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+    if not data.strip():
+        return None
+    return data.decode("utf-8", errors="replace")
+
+
+def load_resource(resource: str, library: str) -> str:
+    """Read a stylesheet out of a GTK library's GResource bundle.
+
+    PyGObject is tried first (no external tool required), the ``gresource``
+    command line tool is only a secondary fallback, and its absence is handled
+    instead of raising. Nothing in this function invokes a missing program.
+    """
+    version = "4.0" if library == "libgtk-4" else "3.0"
+    css = _resource_via_gi(resource, version)
+    if css:
+        return css
+    paths = [lib for lib in LIBRARY_PATHS[library] if Path(lib).exists()]
+    if not paths:
+        raise SystemExit(
+            f"cannot find {library} (looked in {', '.join(LIBRARY_PATHS[library])}); "
+            f"is GTK{version.split('.')[0]} installed?"
+        )
+    for lib in paths:
+        try:
+            result = subprocess.run(
+                ["gresource", "extract", lib, resource],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            break                        # gresource is not installed; stop trying
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout
-    raise SystemExit(f"cannot read {resource} from {library}")
+    raise SystemExit(
+        f"cannot read {resource} from {library}: install PyGObject with its Gtk "
+        f"{version} typelib (e.g. python-gobject) or glib2's 'gresource' tool"
+    )
 
 
 def load_gtk4_base_css(mode: str) -> str:
@@ -1024,12 +1085,9 @@ def high_contrast_active() -> str:
     current = current_theme_name()
     if current.lower().startswith("highcontrast"):
         return current
-    result = subprocess.run(
-        ["gsettings", "get", "org.gnome.desktop.a11y.interface", "high-contrast"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = _gsettings("get", "org.gnome.desktop.a11y.interface", "high-contrast")
+    if result is None:
+        return ""
     if result.stdout.strip() == "true":
         return "org.gnome.desktop.a11y.interface high-contrast"
     return ""
@@ -1060,6 +1118,19 @@ def install_user_css(path: Path, backup: Path, content: str, label: str) -> str:
     return "installed"
 
 
+def _gsettings(*args: str) -> subprocess.CompletedProcess[str] | None:
+    """Run gsettings, returning None when the tool is not installed."""
+    try:
+        return subprocess.run(
+            ["gsettings", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+
+
 def select_theme(name: str) -> str:
     """Select the theme. Returns 'selected', 'highcontrast' or 'unreachable'."""
     if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
@@ -1069,12 +1140,10 @@ def select_theme(name: str) -> str:
         # Accessibility choice: never replace a HighContrast theme by force.
         warn(f"keeping {current} (HighContrast) instead of selecting {name}")
         return "highcontrast"
-    result = subprocess.run(
-        ["gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = _gsettings("set", "org.gnome.desktop.interface", "gtk-theme", name)
+    if result is None:
+        warn("gsettings not available; theme written but not selected")
+        return "unreachable"
     if result.returncode != 0:
         warn(f"could not select {name}: {result.stderr.strip()}")
         return "unreachable"
@@ -1082,12 +1151,9 @@ def select_theme(name: str) -> str:
 
 
 def current_theme_name() -> str:
-    result = subprocess.run(
-        ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = _gsettings("get", "org.gnome.desktop.interface", "gtk-theme")
+    if result is None:
+        return ""
     return result.stdout.strip().strip("'")
 
 
