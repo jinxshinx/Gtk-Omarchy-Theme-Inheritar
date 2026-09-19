@@ -1,0 +1,9 @@
+# Generated output - never commit machine state
+*.pre-gtk-omarchy-theme-inheritar
+state.json
+colors.toml
+*.css
+!nautilus/*.css
+__pycache__/
+*.pyc
+.DS_Store

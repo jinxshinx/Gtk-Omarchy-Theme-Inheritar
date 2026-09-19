@@ -1,0 +1,119 @@
+# Architecture
+
+## Data flow
+
+```
+~/.local/state/omarchy/current/theme/colors.toml
+        │
+        ▼  omarchy-theme-color --file <colors.toml> --all
+   palette (background, dark_background, darker_background,
+            lighter_background, foreground, muted, accent, red,
+            yellow, green, blue, selection, mode, …)
+        │
+        ▼  bin/omarchy-adwaita-gtk
+   ┌───────────────────────────────────────────────────────────┐
+   │ gtk-3.0/gtk.css   Adwaita 3.24 sheet, palette replaced    │
+   │ gtk-4.0/gtk.css   GTK4 Default sheet, palette replaced    │
+   │ ~/.config/gtk-3.0/gtk.css  colour-only rules (priority 800)│
+   │ ~/.config/gtk-4.0/gtk.css  libadwaita variables (800)     │
+   └───────────────────────────────────────────────────────────┘
+        │
+        ▼ hook 70 (existing Omarchy/nautilus integration)
+   ~/.cache/omarchy/gtk/nautilus.css  (loaded by the Nautilus extension at 801)
+```
+
+## Why a copy of Adwaita instead of `@import`
+
+GTK 3.24 and GTK 4.x inline literal colours in their stylesheets, so overriding
+`@define-color` values alone changes nothing. The generator therefore copies the
+installed Adwaita sheet and substitutes only its palette entries for Omarchy
+colours, which keeps every rule, state, size and behaviour intact.
+
+Copying also breaks Adwaita's relative asset paths (`assets/check-symbolic.svg`,
+`assets/bullet-symbolic.svg`, slider PNGs …). The generator rewrites them to
+libgtk's resources:
+
+```
+url("assets/…")  →  url("resource:///org/gtk/libgtk/theme/Adwaita/assets/…")   # GTK3
+                    url("resource:///org/gtk/libgtk/theme/Default/assets/…")   # GTK4
+```
+
+Without that step GTK paints its red "broken image" placeholder over indicators
+(the classic solid-red checkbox).
+
+## Colour mapping
+
+| semantic role | Omarchy key |
+|---|---|
+| window background / foreground | `background` / `foreground` |
+| views, entries, lists, text views | `dark_background` |
+| headerbar, sidebar, titlebar | `darker_background` |
+| cards, dialogs, popovers, thumbnails | `lighter_background` |
+| insensitive / placeholder text | `muted` |
+| accent, selected background | `accent` (foreground derived by luminance) |
+| destructive / error | `red` |
+| success | `green` |
+| warning | `yellow` |
+| links | `blue` |
+| borders / shades | blends derived from the palette |
+
+Blends (hover, active, backdrop, disabled, gradient stops) are computed with a
+mix helper, so no theme-specific value is ever written into the generator.
+
+## The GTK3 user layer (priority 800)
+
+libhandy applications are the reason this layer exists:
+
+* `HdyStyleManager` picks Adwaita itself (ignoring `gtk-theme`) and loads
+  `/sm/puri/handy/themes/Adwaita-dark.css` from libhandy's GResource at
+  **application priority (600)**; that sheet hard-codes Adwaita colours.
+* The GTK theme is priority **200**, so it can never win.
+* GTK's user stylesheet (`~/.config/gtk-3.0/gtk.css`) loads at priority **800**
+  and therefore overrides both.
+
+The layer is generated as a *colour-only copy* of the theme's own rules:
+
+* allowed: `background` (shorthand, used by Adwaita for headerbars),
+  `background-color`, `background-image`, `color`, `border-*-color`,
+  `outline-color`, `caret-color`, `-gtk-secondary-caret-color`
+* skipped: padding, margin, size/min-size, border-width/style, radius, font
+  properties, shadows, icon geometry and every other layout property
+
+Because the values equal the theme's own values, applications that do use the
+theme render pixel-identically; applications that miss it receive the same
+palette.
+
+## The GTK4/libadwaita layer (priority 800)
+
+libadwaita applications force `gtk-theme-name = Adwaita-empty` and load their
+own stylesheet at application priority, so no theme (user or system) can reach
+them. GTK4's user stylesheet can: it is emitted at priority 800 and defines
+libadwaita's semantic variables, using exactly the same variable set as the
+Nautilus layer so that Nautilus - which re-defines them at 801 - always wins
+inside Nautilus.
+
+## High contrast
+
+`omarchy-adwaita-gtk` checks `gtk-theme` and
+`org.gnome.desktop.a11y.interface high-contrast` before writing the two user
+stylesheets. When either indicates high contrast it writes a marked,
+palette-free file and does not switch the theme, so the accessibility palette
+stays in charge.
+
+## Files created by an installation
+
+```
+~/.local/bin/omarchy-adwaita-gtk
+~/.config/omarchy/hooks/theme-set.d/60-omarchy-gtk-accent.sh      (shared)
+~/.config/omarchy/hooks/theme-set.d/70-omarchy-nautilus-palette.sh(shared)
+~/.config/omarchy/hooks/theme-set.d/80-omarchy-adwaita-gtk.sh
+~/.local/share/nautilus-python/extensions/omarchy_palette.py      (optional)
+~/.local/share/themes/Omarchy-Adwaita/{gtk-3.0,gtk-4.0}/gtk.css, index.theme
+~/.config/gtk-3.0/gtk.css          (only if not foreign)
+~/.config/gtk-4.0/gtk.css          (only if not foreign)
+~/.local/state/gtk-omarchy-theme-inheritar/install.json
+```
+
+Every generated file starts with
+`Generated by Gtk-Omarchy-Theme-Inheritar … DO NOT EDIT.` and the generator
+recognises its older marker, so upgrades in place are safe.
