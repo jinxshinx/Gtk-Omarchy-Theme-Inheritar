@@ -116,7 +116,18 @@ if [ -e /usr/lib/nautilus/extensions-4/libnautilus-python.so ] \
    || [ -e /usr/lib/nautilus/extensions-3.0/libnautilus-python.so ]; then
     log "nautilus-python: present"
 else
-    warn "nautilus-python not found; Nautilus will keep its default palette"
+    cat >&2 <<'EOF'
+error: nautilus-python is required for Gtk-Omarchy-Theme-Inheritar's specialized
+       Nautilus palette and live-reload layer, and it was not found.
+
+       Install it with:
+           sudo pacman -S nautilus-python
+
+       Then run ./install.sh again.
+
+       Nothing has been installed or modified.
+EOF
+    exit 1
 fi
 
 echo

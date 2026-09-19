@@ -31,6 +31,21 @@ restyles every open Nautilus window immediately.
 
 ## Where the extension is installed
 
+`nautilus-python` is a **mandatory dependency**: `install.sh` checks for it in
+the environment step, before writing any file, and aborts with
+
+```
+error: nautilus-python is required for Gtk-Omarchy-Theme-Inheritar's specialized
+       Nautilus palette and live-reload layer, and it was not found.
+
+       Install it with:
+           sudo pacman -S nautilus-python
+
+       Then run ./install.sh again.
+```
+
+The installer never runs `sudo` and never installs packages itself.
+
 nautilus-python loads extensions from every `XDG_DATA_DIRS` entry:
 
 * `/usr/share/nautilus-python/extensions/` (system packages)

@@ -54,6 +54,10 @@ priority 801 and **watches the directory**: hook 70 rewrites that file
 atomically on every `omarchy theme set`, and the extension reloads it in place,
 so open Nautilus windows restyle immediately without a restart.
 
+This layer is part of the product rather than an optional extra:
+`nautilus-python` is a mandatory dependency, and the installer aborts before
+touching a single file when it is missing.
+
 ## Theme switching
 
 `omarchy theme set <name>` runs the theme-set hooks in order:
@@ -84,7 +88,9 @@ re-running `omarchy-adwaita-gtk` restores the Omarchy palette.
 - GTK3 ≥ 3.24 and GTK4 ≥ 4.10 (assets are read from libgtk's GResource)
 - libhandy (for libhandy apps) and libadwaita ≥ 1.4 (for libadwaita apps)
 - `python3`, `gresource` (glib2), `gsettings`
-- Optional: `nautilus-python` for the Nautilus palette layer
+- **`nautilus-python`** (required) — it hosts the specialized Nautilus palette
+  provider and its live reload; `install.sh` refuses to install without it
+  (`sudo pacman -S nautilus-python`)
 
 ## Installation
 
