@@ -1,5 +1,10 @@
 # Gtk-Omarchy-Theme-Inheritar
 
+## Screenshots
+
+![GTK4 and libadwaita with Omarchy palette](docs/screenshots/SS-1.png)
+![GTK4 and libadwaita with Omarchy palette](docs/screenshots/SS-1.png)
+
 Gtk-Omarchy-Theme-Inheritar makes ordinary **GTK3**, **GTK3/libhandy**, **GTK4**
 and **libadwaita** applications inherit the active **Omarchy** theme palette,
 while retaining Omarchy's specialized **Nautilus** palette.
