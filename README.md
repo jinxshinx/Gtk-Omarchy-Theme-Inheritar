@@ -100,7 +100,7 @@ re-running `omarchy-adwaita-gtk` restores the Omarchy palette.
 ## Installation
 
 ```bash
-git clone https://github.com/<you>/Gtk-Omarchy-Theme-Inheritar.git
+git clone https://github.com/jinxshinx/Gtk-Omarchy-Theme-Inheritar.git
 cd Gtk-Omarchy-Theme-Inheritar
 ./install.sh
 ```
