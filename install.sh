@@ -133,9 +133,16 @@ fi
 echo
 echo "2. Files"
 
+# ~/.local/bin does not exist on every system, so create it before installing.
+mkdir -p "$(dirname "$GENERATOR_DST")"
 install -m 755 "$GENERATOR_SRC" "$GENERATOR_DST"
 log "generator: installed at ${GENERATOR_DST}"
 record "$GENERATOR_DST"
+
+case ":${PATH}:" in
+    *":${XDG_BIN}:"*) ;;
+    *) warn "${XDG_BIN} is not in \$PATH; call the generator with its full path" ;;
+esac
 
 install_file "${REPO_DIR}/hooks/60-omarchy-gtk-accent.sh" \
              "${HOOK_DIR}/60-omarchy-gtk-accent.sh" "hook 60 (Omarchy accent)"
